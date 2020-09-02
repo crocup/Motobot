@@ -1,7 +1,9 @@
 # first stage
 FROM python:3.8 AS builder
 COPY requirements.txt .
-RUN apt-get install python-lxml -y
+RUN apt-get update
+RUN apt-get upgrade -y
+RUN apt-get install python-lxml python3-peewee -y
 # install dependencies to the local user directory (eg. /root/.local)
 RUN pip install --user -r requirements.txt
 # second unnamed stage
