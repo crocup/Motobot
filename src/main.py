@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import configparser
-from time import sleep
 from peewee import DoesNotExist
 from src.model import Bike, database
 import requests
@@ -24,7 +23,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 logger = logging.getLogger(__name__)
 
-MOTO, MOTOR, SEARCH = range(3)
+MOTO, MOTOR, LINK = range(3)
 
 with open(os.path.normpath(os.path.join(os.path.dirname(__file__), 'brand_av.json')), "r") as read_file:
     data = json.load(read_file)
@@ -41,6 +40,7 @@ def start(update, context):
     """
     update.message.reply_text(
         'Привет! Я помогу найти тебе мотоцикл в РБ. '
+        'Ответь на вопросы и я найду подходящие объявления.'
         'Если хочешь меня остановить, отправь /cancel \n\n'
         'Напиши какую модель ты хочешь? (Например: Honda CB)')
     return MOTO
@@ -73,12 +73,16 @@ def search_m(update, context):
     """
     user = update.message.from_user
     model_dict['user_motor'] = str(update.message.text)
-    brand_link_av = data['brand'][model_dict['user_brand']]
-    model_link_av = data[model_dict['user_brand']][model_dict['user_model']]
-    href_link_av = f"https://moto.av.by/bike?brand_id={brand_link_av}&model_id={model_link_av}" \
+    update.message.reply_text("Отлично! Чтобы проверить объявления, нажми /search")
+    return LINK
+
+
+def check_update(update, context):
+    href_link_av = f"https://moto.av.by/bike?brand_id={data['brand'][model_dict['user_brand']]}&model_id={data[model_dict['user_brand']][model_dict['user_model']]}" \
                    f"&currency=USD&engine_volume_from={model_dict['user_motor']}&engine_volume_to={model_dict['user_motor']}"
     lnk = parsing_av(link=href_link_av)
-    for i in lnk:
+    lnk_array = list(set(lnk))
+    for i in lnk_array:
         update.message.reply_text(i)
 
 
@@ -104,6 +108,7 @@ def parsing_av(link):
             hash_link = hashlib.md5(str_hash.encode())
             try:
                 Bike.get(Bike.link_hash == hash_link.hexdigest())
+                href_moto.append("Новых объявлений нет")
             except DoesNotExist:
                 Bike.create(user_uid=hash_user.hexdigest(),
                             name_bike=model_dict['user_brand'],
@@ -138,7 +143,7 @@ def main():
         states={
             MOTO: [MessageHandler(Filters.text & ~Filters.command, motor)],
             MOTOR: [MessageHandler(Filters.text & ~Filters.command, search_m)],
-
+            LINK: [CommandHandler('search', check_update)],
         },
         fallbacks=[CommandHandler('cancel', cancel)]
     )
