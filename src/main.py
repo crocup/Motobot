@@ -12,19 +12,17 @@ from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters,
 from bs4 import BeautifulSoup
 
 
-class DatabaseUser:
+# Инициализация БД
+class DatabaseBike:
     def __init__(self):
         database.init(os.path.normpath(os.path.join(os.path.dirname(__file__), 'Bike_db.sqlite')))
 
 
-# Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     level=logging.INFO)
-
 logger = logging.getLogger(__name__)
-
 MOTO, MOTOR, LINK = range(3)
-
+# Чтение конфиг-файлов
 with open(os.path.normpath(os.path.join(os.path.dirname(__file__), 'brand_av.json')), "r") as read_file:
     data = json.load(read_file)
 config = configparser.ConfigParser()
@@ -32,14 +30,9 @@ config.read(os.path.normpath(os.path.join(os.path.dirname(__file__), 'config.ini
 
 
 def start(update, context):
-    """
-
-    :param update:
-    :param context:
-    :return:
-    """
+    """ Запуск бота """
     update.message.reply_text(
-        'Привет! Я помогу найти тебе мотоцикл в РБ. '
+        'Привет! Я помогу найти тебе мотоцикл на сайте moto.av.by '
         'Ответь на вопросы и я найду подходящие объявления.'
         'Если хочешь меня остановить, отправь /cancel \n\n'
         'Напиши какую модель ты хочешь? (Например: Honda CB)')
@@ -47,12 +40,7 @@ def start(update, context):
 
 
 def motor(update, context):
-    """
-
-    :param update:
-    :param context:
-    :return:
-    """
+    """ Установка параметров (модели мотоцикла) """
     global model_dict
     model_dict = {}
     user = update.message.from_user
@@ -60,38 +48,36 @@ def motor(update, context):
     model = str(update.message.text).lower().split()
     model_dict['user_brand'] = model[0]
     model_dict['user_model'] = model[1]
-    update.message.reply_text("Теперь напиши какой обьем мотоцикла хочешь?")
+    update.message.reply_text("Теперь какой обьем мотоцикла хочешь?")
     return MOTOR
 
 
 def search_m(update, context):
-    """
-
-    :param update:
-    :param context:
-    :return:
-    """
+    """ Установка параметров (обьем мотоцикла) """
     user = update.message.from_user
+    choose = str(update.message.text)
+    if not choose.isdigit():
+        update.message.reply_text("Извини, не могу понять тебя. Попробуй еще раз")
+        return MOTOR
     model_dict['user_motor'] = str(update.message.text)
-    update.message.reply_text("Отлично! Чтобы проверить объявления, нажми /search")
+    update.message.reply_text("Отлично! Нажми /save и motobot будет искать объявления!")
     return LINK
 
 
-def check_update(update, context):
+def check_update(context):
+    """ Отправка обьявлений в бот """
+    volume_from = int(model_dict['user_motor']) - 10
+    volume_to = int(model_dict['user_motor']) + 10
     href_link_av = f"https://moto.av.by/bike?brand_id={data['brand'][model_dict['user_brand']]}&model_id={data[model_dict['user_brand']][model_dict['user_model']]}" \
-                   f"&currency=USD&engine_volume_from={model_dict['user_motor']}&engine_volume_to={model_dict['user_motor']}"
+                   f"&currency=USD&engine_volume_from={str(volume_from)}&engine_volume_to={str(volume_to)}"
     lnk = parsing_av(link=href_link_av)
     lnk_array = list(set(lnk))
     for i in lnk_array:
-        update.message.reply_text(i)
+        context.bot.send_message(chat_id=context.job.context, text=i)
 
 
 def parsing_av(link):
-    """
-
-    :param link:
-    :return:
-    """
+    """ Поиск новых обьявлений и добавление в БД"""
     href_moto = []
     r = requests.get(link)
     soup = BeautifulSoup(r.text, "lxml").find('div', class_='listing')
@@ -108,7 +94,6 @@ def parsing_av(link):
             hash_link = hashlib.md5(str_hash.encode())
             try:
                 Bike.get(Bike.link_hash == hash_link.hexdigest())
-                href_moto.append("Новых объявлений нет")
             except DoesNotExist:
                 Bike.create(user_uid=hash_user.hexdigest(),
                             name_bike=model_dict['user_brand'],
@@ -119,23 +104,26 @@ def parsing_av(link):
 
 
 def cancel(update, context):
-    """
-
-    :param update:
-    :param context:
-    :return:
-    """
-    user = update.message.from_user
+    """ Остановка бота """
+    job = context.chat_data['job']
+    job.schedule_removal()
+    del context.chat_data['job']
     update.message.reply_text('Хорошего дня!',
                               reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 
-def main():
-    """
+def set_timer(update, context):
+    """ Установка таймера для переодической проверки обьявлений (каждые 60 сек.) """
+    chat_id = update.message.chat_id
+    try:
+        new_job = context.job_queue.run_repeating(check_update, 60, first=0, context=chat_id)
+        context.chat_data['job'] = new_job
+    except (IndexError, ValueError) as e:
+        logger.error(e)
 
-    :return:
-    """
+
+def main():
     updater = Updater(config["Telegram"]["TOKEN"], use_context=True)
     dp = updater.dispatcher
     conv_handler = ConversationHandler(
@@ -143,12 +131,11 @@ def main():
         states={
             MOTO: [MessageHandler(Filters.text & ~Filters.command, motor)],
             MOTOR: [MessageHandler(Filters.text & ~Filters.command, search_m)],
-            LINK: [CommandHandler('search', check_update)],
+            LINK: [CommandHandler('save', set_timer)],
         },
         fallbacks=[CommandHandler('cancel', cancel)]
     )
     dp.add_handler(conv_handler)
-    # Start the Bot
     updater.start_polling()
     updater.idle()
     database.close()
