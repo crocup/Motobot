@@ -1,14 +1,9 @@
-FROM python:3.8
-
+FROM python:3.6
+RUN pip3 install pipenv
 RUN apt-get update
 RUN apt-get upgrade -y
-RUN apt-get install python-lxml python3-peewee -y
-
-WORKDIR /code
-
-COPY requirements.txt .
-COPY ./src .
-
-RUN pip install --user -r requirements.txt
-
-CMD [ "python", "main.py" ]
+RUN apt-get install python-lxml python3-peewee python-sqlite -y
+COPY requirements.txt ./
+COPY /src ./
+RUN pip install -r requirements.txt
+CMD [ "python", "./main.py" ]
