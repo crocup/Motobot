@@ -4,7 +4,7 @@ import logging
 import os
 import configparser
 from peewee import DoesNotExist
-from src.model import Bike, database
+from model import Bike, database
 import requests
 from telegram import (ReplyKeyboardRemove)
 from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters,
