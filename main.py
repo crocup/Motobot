@@ -10,6 +10,13 @@ from telegram import (ReplyKeyboardRemove)
 from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters,
                           ConversationHandler)
 from bs4 import BeautifulSoup
+import sentry_sdk
+
+
+sentry_sdk.init(
+    "https://link",
+    traces_sample_rate=1.0
+)
 
 
 # Инициализация БД
@@ -68,7 +75,7 @@ def check_update(context):
     """ Отправка обьявлений в бот """
     volume_from = int(model_dict['user_motor']) - 10
     volume_to = int(model_dict['user_motor']) + 10
-    href_link_av = f"https://moto.av.by/bike?brand_id={data['brand'][model_dict['user_brand']]}&model_id={data[model_dict['user_brand']][model_dict['user_model']]}" \
+    href_link_av = f"https://moto.av.by/bike?brand_id={data['brand'][model_dict['user_brand']]}&model_id={data[model_dict['user_brand']][model_dict['user_model']]}" \ 
                    f"&currency=USD&engine_volume_from={str(volume_from)}&engine_volume_to={str(volume_to)}"
     lnk = parsing_av(link=href_link_av)
     lnk_array = list(set(lnk))
@@ -83,41 +90,42 @@ def parsing_av(link):
     soup = BeautifulSoup(r.text, "lxml").find('div', class_='listing')
     listing_item_main = soup.find_all('div', class_='listing-item-wrap')
     for i in listing_item_main:
-        hr = i.find('a', href=True)
-        price = i.find('small').text
-        find_company = str(hr['href']).find("company")
-        if find_company != -1:
-            continue
-        else:
-            hash_user = hashlib.md5(str(model_dict['user']).encode())
-            str_hash = f"link:{hr['href']} price:{price}"
-            hash_link = hashlib.md5(str_hash.encode())
-            try:
-                Bike.get(Bike.link_hash == hash_link.hexdigest())
-            except DoesNotExist:
-                Bike.create(user_uid=hash_user.hexdigest(),
-                            name_bike=model_dict['user_brand'],
-                            link_bike=hr['href'],
-                            link_hash=hash_link.hexdigest())
-                href_moto.append(hr['href'])
+        find_title = i.find('div', class_='listing-item-title')
+        hr = find_title.find('a', href=True)
+        find_price = i.find('div', class_='listing-item-price')
+        price = find_price.find('small').text
+        hash_user = hashlib.md5(str(model_dict['user']).encode())
+        str_hash = f"link:{hr['href']} price:{price}"
+        hash_link = hashlib.md5(str_hash.encode())
+        try:
+            Bike.get(Bike.link_hash == hash_link.hexdigest())
+        except DoesNotExist:
+            Bike.create(user_uid=hash_user.hexdigest(),
+                        name_bike=model_dict['user_brand'],
+                        link_bike=hr['href'],
+                        link_hash=hash_link.hexdigest())
+            href_moto.append(hr['href'])
     return href_moto
 
 
 def cancel(update, context):
     """ Остановка бота """
-    job = context.chat_data['job']
-    job.schedule_removal()
-    del context.chat_data['job']
-    update.message.reply_text('Хорошего дня!',
-                              reply_markup=ReplyKeyboardRemove())
-    return ConversationHandler.END
+    try:
+        job = context.chat_data['job']
+        job.schedule_removal()
+        del context.chat_data['job']
+        update.message.reply_text('Хорошего дня!',
+                                  reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+    except Exception as e:
+        print(e)
 
 
 def set_timer(update, context):
-    """ Установка таймера для переодической проверки обьявлений (каждые 60 сек.) """
+    """ Установка таймера для переодической проверки обьявлений (каждые 15 мин.) """
     chat_id = update.message.chat_id
     try:
-        new_job = context.job_queue.run_repeating(check_update, 60, first=0, context=chat_id)
+        new_job = context.job_queue.run_repeating(check_update, 900, first=0, context=chat_id)
         context.chat_data['job'] = new_job
     except (IndexError, ValueError) as e:
         logger.error(e)
@@ -146,4 +154,4 @@ if __name__ == '__main__':
         main()
     except Exception as e:
         logger.error(e)
-        exit(0)
+        exit(1)
